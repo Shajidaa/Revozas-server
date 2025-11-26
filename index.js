@@ -1,10 +1,42 @@
 const express = require("express");
 const app = express();
 const cors = require("cors");
+const admin = require("firebase-admin");
 require("dotenv").config();
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const port = process.env.PORT || 5000;
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.xodph41.mongodb.net/?appName=Cluster0`;
+
+const decoded = Buffer.from(
+  process.env.FIREBASE_SERVICE_KEY,
+  "base64"
+).toString("utf8");
+const serviceAccount = JSON.parse(decoded);
+
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount),
+});
+
+const verifyFireBaseToken = async (req, res, next) => {
+  const authorization = req.headers.authorization;
+  if (!authorization) {
+    return res.status(401).send({ message: "unauthorized access" });
+  }
+  const token = authorization.split(" ")[1];
+  console.log(token);
+
+  try {
+    const decoded = await admin.auth().verifyIdToken(token);
+
+    console.log("inside token", decoded);
+    req.token_email = decoded.email;
+    next();
+  } catch (error) {
+    console.log(error);
+
+    return res.status(401).send({ message: "unauthorized" });
+  }
+};
 
 //middle ware
 app.use(cors());
@@ -61,8 +93,20 @@ async function run() {
 
       res.send(result);
     });
+    app.get("/discount-product", async (req, res) => {
+      try {
+        const result = await productCollection
+          .find({ discountPercent: { $gt: 0 } })
+          .sort({ createdAt: -1 })
+          .toArray();
 
-    app.get("/product-details/:id", async (req, res) => {
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ error: "Failed to fetch discount products" });
+      }
+    });
+
+    app.get("/products/:id", async (req, res) => {
       const id = req.params.id;
       const query = { _id: new ObjectId(id) };
       const result = await productCollection.findOne(query);
@@ -71,16 +115,53 @@ async function run() {
 
     // my product api
 
-    app.get("/create-product", async (req, res) => {
+    app.post("/add-product", verifyFireBaseToken, async (req, res) => {
+      try {
+        const product = req.body;
+
+        product.userEmail = req.token_email;
+
+        const result = await myProductsCollection.insertOne(product);
+        res.send(result);
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: "Failed to add product" });
+      }
+    });
+
+    app.get("/add-product", verifyFireBaseToken, async (req, res) => {
+      const email = req.query.email;
       const query = {};
+      if (email) {
+        query.userEmail = email; // FIXED
+        if (email !== req.token_email) {
+          return res.status(403).send({ message: "forbidden message" });
+        }
+      }
       const cursor = myProductsCollection.find(query);
       const result = await cursor.toArray();
       res.send(result);
     });
-    app.delete("/my-product/:id", async (res, req) => {
+
+    // app.delete("/my-product/:id", verifyFireBaseToken, async (req, res) => {
+    //   const id = req.params.id;
+    //   console.log("Deleting product id:", id, "for user:", req.token_email);
+
+    //   const query = { _id: new ObjectId(id), userEmail: req.token_email };
+    //   const result = await myProductsCollection.deleteOne(query);
+    //   console.log("Delete result:", result);
+
+    //   if (result.deletedCount === 0) {
+    //     return res
+    //       .status(403)
+    //       .send({ message: "Not allowed to delete this item" });
+    //   }
+
+    //   res.send(result);
+    // });
+    app.delete("/my-product/:id", verifyFireBaseToken, async (req, res) => {
       const id = req.params.id;
       const query = { _id: new ObjectId(id) };
-
       const result = await myProductsCollection.deleteOne(query);
       res.send(result);
     });
