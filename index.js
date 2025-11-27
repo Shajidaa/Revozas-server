@@ -17,29 +17,50 @@ admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
 });
 
+// const verifyFireBaseToken = async (req, res, next) => {
+//   const authorization = req.headers.authorization;
+//   if (!authorization) {
+//     return res.status(401).send({ message: "unauthorized access" });
+//   }
+//   const token = authorization.split(" ")[1];
+//   console.log(token);
+
+//   try {
+//     const decoded = await admin.auth().verifyIdToken(token);
+
+//     console.log("inside token", decoded);
+//     req.token_email = decoded.email;
+//     next();
+//   } catch (error) {
+//     console.log(error);
+
+//     return res.status(401).send({ message: "unauthorized" });
+//   }
+// };
 const verifyFireBaseToken = async (req, res, next) => {
-  const authorization = req.headers.authorization;
-  if (!authorization) {
-    return res.status(401).send({ message: "unauthorized access" });
-  }
-  const token = authorization.split(" ")[1];
-  console.log(token);
-
   try {
-    const decoded = await admin.auth().verifyIdToken(token);
+    const token = req.headers.authorization?.split(" ")[1];
+    if (!token) {
+      return res.status(401).send({ message: "No token provided" });
+    }
 
-    console.log("inside token", decoded);
-    req.token_email = decoded.email;
+    const decodedToken = await admin.auth().verifyIdToken(token);
+    req.token_email = decodedToken.email; // Ensure this is set
+    console.log("Verified user email:", req.token_email);
     next();
   } catch (error) {
-    console.log(error);
-
-    return res.status(401).send({ message: "unauthorized" });
+    console.error("Token verification error:", error);
+    res.status(401).send({ message: "Invalid token" });
   }
 };
-
 //middle ware
-app.use(cors());
+// app.use(cors());
+app.use(
+  cors({
+    origin: "http://localhost:3000",
+  })
+);
+
 app.use(express.json());
 
 app.get("/", (req, res) => {
@@ -105,6 +126,41 @@ async function run() {
         res.status(500).send({ error: "Failed to fetch discount products" });
       }
     });
+    app.get("/search", async (req, res) => {
+      try {
+        const name = req.query.name;
+
+        if (!name) {
+          return res.status(400).send({ message: "Name query required" });
+        }
+
+        const result = await productCollection
+          .find({ title: { $regex: name, $options: "i" } })
+          .toArray();
+
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ message: "Search failed" });
+      }
+    });
+
+    app.get("/products-by-category", async (req, res) => {
+      try {
+        const category = req.query.category;
+
+        if (!category) {
+          return res.status(400).send({ message: "Category query required" });
+        }
+
+        const result = await productCollection
+          .find({ category: category })
+          .toArray();
+
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ message: "Failed to fetch category products" });
+      }
+    });
 
     app.get("/products/:id", async (req, res) => {
       const id = req.params.id;
@@ -143,30 +199,32 @@ async function run() {
       res.send(result);
     });
 
-    // app.delete("/my-product/:id", verifyFireBaseToken, async (req, res) => {
-    //   const id = req.params.id;
-    //   console.log("Deleting product id:", id, "for user:", req.token_email);
-
-    //   const query = { _id: new ObjectId(id), userEmail: req.token_email };
-    //   const result = await myProductsCollection.deleteOne(query);
-    //   console.log("Delete result:", result);
-
-    //   if (result.deletedCount === 0) {
-    //     return res
-    //       .status(403)
-    //       .send({ message: "Not allowed to delete this item" });
-    //   }
-
-    //   res.send(result);
-    // });
     app.delete("/my-product/:id", verifyFireBaseToken, async (req, res) => {
-      const id = req.params.id;
-      const query = { _id: new ObjectId(id) };
-      const result = await myProductsCollection.deleteOne(query);
-      res.send(result);
+      try {
+        const id = req.params.id;
+        const tokenEmail = req.token_email.trim().toLowerCase();
+
+        // Use ID as string (not ObjectId)
+        const query = { _id: id, userEmail: tokenEmail };
+
+        const product = await myProductsCollection.findOne(query);
+
+        if (!product) {
+          return res
+            .status(404)
+            .send({ message: "Product not found or not authorized" });
+        }
+
+        const result = await myProductsCollection.deleteOne(query);
+        res.send({ message: "Product deleted successfully" });
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: "Failed to delete product" });
+      }
     });
+
     // Send a ping to confirm a successful connection
-    await client.db("admin").command({ ping: 1 });
+    // await client.db("admin").command({ ping: 1 });
     console.log(
       "Pinged your deployment. You successfully connected to MongoDB!"
     );
