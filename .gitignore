@@ -1,3 +1,5 @@
 node_modules
 .env
 revoza-firebase-adminsdk-fbsvc.json
+.vercel
+.env*.local
